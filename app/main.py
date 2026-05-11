@@ -20,16 +20,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize on startup
+# Initialize on startup using async background task
+import asyncio
+
 @app.on_event("startup")
 async def startup_event():
-    """Initialize retrieval indexes on startup."""
-    print("🚀 Starting SHL Recommender...")
-    try:
-        init_retrieval()
-        print("✓ Retrieval initialized")
-    except Exception as e:
-        print(f"✗ Error initializing retrieval: {e}")
+    """Trigger initialization in the background so it doesn't block port binding."""
+    print("🚀 Starting SHL Recommender API...")
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, init_retrieval)
+    print("✓ Retrieval initialization started in background")
 
 @app.get("/health")
 async def health():
