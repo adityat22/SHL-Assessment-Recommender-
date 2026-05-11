@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SHL Agent Tester</title>
+    <style>
+        body { max-width: 800px; margin: 20px auto; font-family: system-ui; }
+        .message { padding: 12px; margin: 8px 0; border-radius: 8px; }
+        .user { background: #e3f2fd; margin-left: 20%; }
+        .assistant { background: #f5f5f5; margin-right: 20%; }
+        .recommendations { background: #f0f4c3; padding: 10px; border-radius: 6px; margin-top: 8px; }
+        input { width: 80%; padding: 10px; }
+        button { padding: 10px 20px; }
+        #api_url { width: 100%; margin-bottom: 10px; padding: 8px; }
+    </style>
+</head>
+<body>
+
+<h1>SHL Agent Tester</h1>
+
+<input id="api_url" value="http://127.0.0.1:8000/chat" placeholder="API URL">
+
+<div id="messages"></div>
+
+<div style="display: flex; gap: 8px; margin-top: 20px;">
+    <input id="input" placeholder="Type message...">
+    <button onclick="send()" id="send_btn">Send</button>
+    <button onclick="clearChat()">Clear</button>
+</div>
+
+<script>
+let messages = []
+
+// Allow Enter key to send
+document.getElementById("input").addEventListener("keypress", function(event) {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    document.getElementById("send_btn").click();
+  }
+});
+
+async function send() {
+    const inputEl = document.getElementById('input')
+    const content = inputEl.value
+    if(!content.trim()) return;
+    
+    inputEl.value = ''
+    inputEl.disabled = true;
+
+    messages.push({role: 'user', content})
+    render()
+
+    try {
+        const res = await fetch(document.getElementById('api_url').value, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({messages})
+        })
+
+        const data = await res.json()
+        messages.push({role: 'assistant', content: data.reply})
+
+        if(data.recommendations && data.recommendations.length > 0) {
+            let recsText = '<br><br><strong>Recommendations:</strong><br>' + data.recommendations.map(r => `• <a href="${r.url}" target="_blank">${r.name}</a>`).join('<br>')
+            messages[messages.length-1].recs = recsText
+        }
+    } catch (e) {
+        messages.push({role: 'assistant', content: "Error connecting to the API. Make sure uvicorn is running!"})
+    }
+
+    inputEl.disabled = false;
+    inputEl.focus();
+    render()
+}
+
+function render() {
+    const el = document.getElementById('messages')
+    el.innerHTML = ''
+
+    for(const msg of messages) {
+        const div = document.createElement('div')
+        div.className = `message ${msg.role}`
+        div.innerHTML = msg.content + (msg.recs ? msg.recs : '')
+        el.appendChild(div)
+    }
+    window.scrollTo(0, document.body.scrollHeight);
+}
+
+function clearChat() {
+    messages = []
+    render()
+}
+</script>
+
+</body>
+</html>
