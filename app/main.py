@@ -21,27 +21,34 @@ app.add_middleware(
 )
 
 # Initialize lazily without blocking the main thread
-import asyncio
-from fastapi import BackgroundTasks
+import threading
+import time
 
 _is_initialized = False
-_init_lock = asyncio.Lock()
+_is_initializing = False
 
-async def ensure_initialized():
-    """Lazy-load retrieval components only when needed, without blocking the event loop."""
-    global _is_initialized
-    if not _is_initialized:
-        async with _init_lock:
-            if not _is_initialized:
-                try:
-                    print("🚀 Starting lazy initialization of SHL Recommender Retrieval (Threaded)...")
-                    loop = asyncio.get_event_loop()
-                    # Run the heavy blocking function in a separate thread
-                    await loop.run_in_executor(None, init_retrieval)
-                    _is_initialized = True
-                    print("✓ Lazy Retrieval initialization complete")
-                except Exception as e:
-                    print(f"✗ Error during lazy retrieval initialization: {e}")
+def background_init():
+    global _is_initialized, _is_initializing
+    if _is_initialized or _is_initializing:
+        return
+    
+    _is_initializing = True
+    try:
+        print("🚀 Starting SHL Recommender Retrieval Model Download in Background...")
+        init_retrieval()
+        _is_initialized = True
+        print("✓ Lazy Retrieval initialization complete")
+    except Exception as e:
+        print(f"✗ Error during lazy retrieval initialization: {e}")
+    finally:
+        _is_initializing = False
+
+def ensure_initialized():
+    """Trigger background initialization if not started."""
+    if not _is_initialized and not _is_initializing:
+        # Start a totally detached native thread, so it doesn't lock asyncio
+        t = threading.Thread(target=background_init, daemon=True)
+        t.start()
 
 @app.get("/health")
 async def health():
@@ -51,8 +58,15 @@ async def health():
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """Main chat endpoint."""
-    # Ensure retrieval components are loaded on the first request 
-    await ensure_initialized()
+    ensure_initialized()
+    
+    if not _is_initialized:
+        # If the model is currently downloading, return a user-friendly waiting message
+        return ChatResponse(
+            reply="The AI brain is currently powering up and downloading its assessment models on the Render server. Please wait about 30 seconds and ask me again! 🧠⏳",
+            recommendations=[],
+            end_of_conversation=False
+        )
     
     try:
         messages_dicts = [{"role": msg.role, "content": msg.content} for msg in request.messages]
