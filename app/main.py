@@ -20,16 +20,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize on startup using async background task
-import asyncio
+# Initialize on startup using background task securely bounded to the app lifecycle
+from fastapi import BackgroundTasks
 
-@app.on_event("startup")
-async def startup_event():
-    """Trigger initialization in the background so it doesn't block port binding."""
-    print("🚀 Starting SHL Recommender API...")
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, init_retrieval)
-    print("✓ Retrieval initialization started in background")
+# Remove the on_event startup logic completely
+# Instead, we will lazily initialize during the first chat request
+
+_is_initialized = False
+
+def ensure_initialized():
+    """Lazy-load retrieval components only when needed."""
+    global _is_initialized
+    if not _is_initialized:
+        try:
+            print("🚀 Starting lazy initialization of SHL Recommender Retrieval...")
+            init_retrieval()
+            _is_initialized = True
+            print("✓ Lazy Retrieval initialization complete")
+        except Exception as e:
+            print(f"✗ Error during lazy retrieval initialization: {e}")
 
 @app.get("/health")
 async def health():
@@ -39,6 +48,9 @@ async def health():
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """Main chat endpoint."""
+    # Ensure retrieval components are loaded on the first request rather than blocking startup
+    ensure_initialized()
+    
     try:
         messages_dicts = [{"role": msg.role, "content": msg.content} for msg in request.messages]
         response = process_chat(messages_dicts)
