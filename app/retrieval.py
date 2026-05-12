@@ -1,57 +1,36 @@
 from typing import List, Dict
 from rank_bm25 import BM25Okapi
-from sentence_transformers import SentenceTransformer
-import numpy as np
-import faiss
 import os
-import pickle
 from .catalog import get_catalog_for_retrieval
 
 # Global indexes (will be built on startup)
 bm25_index = None
-faiss_index = None
 catalog_items = None
-embeddings_model = None
 
 CACHE_DIR = "data"
 BM25_CACHE = os.path.join(CACHE_DIR, "bm25.pkl")
-FAISS_CACHE = os.path.join(CACHE_DIR, "faiss.index")
-EMBEDDINGS_CACHE = os.path.join(CACHE_DIR, "embeddings.pkl")
 
 def init_retrieval():
     """Initialize all retrieval indexes on startup."""
-    global bm25_index, faiss_index, catalog_items, embeddings_model
+    global bm25_index, catalog_items
     
     print("Initializing retrieval indexes...")
     
     catalog_items = get_catalog_for_retrieval()
     
-    # Initialize embedding model
-    print("Loading embedding model...")
-    embeddings_model = SentenceTransformer("all-MiniLM-L6-v2")  # Fast & small
-    
-    # Build BM25
+    # Build BM25 (Uses very little memory, perfect for Render Free Tier)
     print("Building BM25 index...")
     corpus = [item["combined_text"] for item in catalog_items]
     tokenized_corpus = [text.lower().split() for text in corpus]
     bm25_index = BM25Okapi(tokenized_corpus)
     
-    # Build FAISS
-    print("Building FAISS index...")
-    embeddings = embeddings_model.encode(corpus)
-    embeddings = np.array(embeddings, dtype=np.float32)
-    
-    dimension = embeddings.shape[1]
-    faiss_index = faiss.IndexFlatL2(dimension)
-    faiss_index.add(embeddings)
-    
     print(f"✓ Retrieval initialized with {len(catalog_items)} items")
 
 def hybrid_search(query: str, top_k: int = 20) -> List[Dict]:
-    """Hybrid search: BM25 + FAISS + rule-based boosting."""
-    global bm25_index, faiss_index, catalog_items, embeddings_model
+    """Search: BM25 + rule-based boosting. (FAISS removed to fit in 512MB RAM limit)"""
+    global bm25_index, catalog_items
     
-    if not bm25_index or not faiss_index:
+    if not bm25_index:
         return []
     
     # 1. BM25 search
@@ -63,18 +42,10 @@ def hybrid_search(query: str, top_k: int = 20) -> List[Dict]:
         reverse=True
     )[:top_k]
     
-    # 2. FAISS vector search
-    query_embedding = embeddings_model.encode([query])
-    distances, indices = faiss_index.search(query_embedding, top_k)
-    faiss_results = [(int(idx), 1.0 / (1.0 + float(dist))) for idx, dist in zip(indices[0], distances[0])]
-    
-    # 3. Merge and score
+    # 3. Merge and score (Only BM25 now)
     all_results = {}
     for idx, score in bm25_results:
-        all_results[idx] = all_results.get(idx, 0) + (score / len(bm25_results))
-    
-    for idx, score in faiss_results:
-        all_results[idx] = all_results.get(idx, 0) + (score / len(faiss_results))
+        all_results[idx] = score
     
     # 4. Apply rule-based boosts
     query_lower = query.lower()
